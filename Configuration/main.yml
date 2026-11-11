@@ -1,0 +1,122 @@
+---
+title: AtomOS v0.0.9
+description: Profile-driven Windows tuning - AtomOS Tiny / Lite / Standard
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'AtomOS: preparing the shell for modification...'}
+
+  # Record what the playbook was applied to. Lets support tell a 26H2 run from a
+  # 24H2 run without guessing, and gives AtomToolBox something to read.
+  - !powerShell:
+    command: |
+      $os  = Get-CimInstance Win32_OperatingSystem
+      $key = 'HKLM:\SOFTWARE\Project Atom'
+      New-Item -Path $key -Force | Out-Null
+      Set-ItemProperty -Path $key -Name 'DetectedBuild'   -Value ([int]$os.BuildNumber) -Type DWord  -Force
+      Set-ItemProperty -Path $key -Name 'DetectedVersion' -Value ([string]$os.Version)  -Type String -Force
+      Set-ItemProperty -Path $key -Name 'DetectedCaption' -Value ([string]$os.Caption)  -Type String -Force
+    errorAction: Ignore
+
+  # ---------------------------------------------------------------
+  # PRELUDE - release file and registry locks before anything writes
+  # ---------------------------------------------------------------
+  - !taskKill: {name: 'explorer', errorAction: Ignore}
+  - !taskKill: {name: 'SearchApp', errorAction: Ignore}
+  - !taskKill: {name: 'SearchHost', errorAction: Ignore}
+  - !taskKill: {name: 'RuntimeBroker', errorAction: Ignore}
+  - !taskKill: {name: 'TextInputHost', errorAction: Ignore}
+  - !taskKill: {name: 'ShellExperienceHost', errorAction: Ignore}
+  - !taskKill: {name: 'backgroundTaskHost', errorAction: Ignore}
+  - !taskKill: {name: 'Widgets', errorAction: Ignore}
+  - !taskKill: {name: 'MicrosoftEdge*', errorAction: Ignore}
+  - !taskKill: {name: 'msedge', errorAction: Ignore}
+  - !taskKill: {name: 'OneDrive', errorAction: Ignore}
+
+  # ---------------------------------------------------------------
+  # 1. SHARED SPINE - identical on every profile, safe on every profile
+  # ---------------------------------------------------------------
+  - !status: {status: 'AtomOS: reducing the service floor...'}
+  - !task: {path: 'Tasks\10-services.yml'}
+
+  - !status: {status: 'AtomOS: removing bloatware packages...'}
+  - !task: {path: 'Tasks\11-appx.yml'}
+
+  - !status: {status: 'AtomOS: hardening privacy and telemetry...'}
+  - !task: {path: 'Tasks\14-privacy.yml'}
+
+  - !status: {status: 'AtomOS: applying the safe tuning baseline...'}
+  - !task: {path: 'Tasks\15-performance.yml'}
+
+  # ---------------------------------------------------------------
+  # 2. ECOSYSTEM REMOVALS - gated by profile or by explicit choice
+  # ---------------------------------------------------------------
+  - !status: {status: 'AtomOS: removing Store and Xbox...'}
+  - !task: {path: 'Tasks\12-store-xbox.yml', options: [profile-tiny, store-xbox-remove]}
+
+  - !status: {status: 'AtomOS: removing Windows Defender...'}
+  - !task: {path: 'Tasks\13-defender.yml', options: [profile-tiny, defender-disable]}
+
+  # ---------------------------------------------------------------
+  # 3. PROFILE LAYERS - exactly one radio option is active
+  # ---------------------------------------------------------------
+  - !status: {status: 'AtomOS: applying the latency stack...'}
+  - !task: {path: 'Tasks\23-tuned.yml', options: [profile-tiny, profile-light]}
+
+  - !task: {path: 'Tasks\20-tiny.yml', option: profile-tiny}
+  - !task: {path: 'Tasks\21-light.yml', option: profile-light}
+  - !task: {path: 'Tasks\22-standard.yml', option: profile-standard}
+
+  # Optional hardware services - disabled by default on Tiny and Lite only
+  - !status: {status: 'AtomOS: applying hardware service toggles...'}
+  - !task: {path: 'Tasks\30-toggles.yml', option: profile-tiny}
+  - !task: {path: 'Tasks\30-toggles.yml', option: profile-light}
+
+  # ---------------------------------------------------------------
+  # 4. SHELL, EDGE, UPDATES, IDENTITY
+  # ---------------------------------------------------------------
+  - !status: {status: 'AtomOS: rebuilding the shell...'}
+  - !task: {path: 'Tasks\16-ui.yml'}
+
+  # Edge is removed unconditionally, on every profile and every browser answer.
+  # Picking None therefore leaves the machine with no browser on purpose.
+  - !status: {status: 'AtomOS: removing Microsoft Edge...'}
+  - !task: {path: 'Tasks\17-edge.yml'}
+
+  - !status: {status: 'AtomOS: freezing Windows Update...', option: profile-tiny}
+  - !task: {path: 'Tasks\18-updates.yml'}
+
+  - !status: {status: 'AtomOS: applying identity and wallpaper...'}
+  - !task: {path: 'Tasks\19-wallpaper.yml'}
+  - !status: {status: 'AtomOS Tiny: trimming the component store...', option: profile-tiny}
+  - !task: {path: 'Tasks\24-shrink.yml', option: profile-tiny}
+
+  # ---------------------------------------------------------------
+  # 5. NETWORK, GAMING, TIMER
+  # ---------------------------------------------------------------
+  - !status: {status: 'AtomOS: tuning the network and storage stack...'}
+  - !task: {path: 'Tasks\40-networking.yml'}
+
+  - !status: {status: 'AtomOS: applying gaming and scheduler tuning...'}
+  - !task: {path: 'Tasks\41-gaming.yml'}
+
+  - !status: {status: 'AtomOS: installing the 0.5 ms timer daemon...'}
+  - !task: {path: 'Tasks\42-timer.yml', options: [profile-tiny, profile-light]}
+
+  - !status: {status: 'AtomOS: installing your browser...'}
+  - !task: {path: 'Tasks\50-browser.yml', options: [browser-brave, browser-firefox, browser-chrome]}
+
+  # ---------------------------------------------------------------
+  # 6. POSTINSTALL, COMPRESSION, THEN FINAL CLEANUP
+  #    CompactOS runs before 70-final: that stage deletes %TEMP%,
+  #    where AME extracts the task files, so no !task can follow it.
+  #    WinRE / DISM / OneDrive are already removed earlier, so the tree
+  #    being compressed is close to final.
+  # ---------------------------------------------------------------
+  - !task: {path: 'Tasks\60-postinstall.yml'}
+
+  - !status: {status: 'AtomOS: enabling CompactOS...', options: [profile-light, profile-tiny]}
+  - !task: {path: 'Tasks\72-compact.yml', options: [profile-light, profile-tiny]}
+
+  - !status: {status: 'AtomOS: final cleanup and restart...'}
+  - !task: {path: 'Tasks\70-final.yml'}

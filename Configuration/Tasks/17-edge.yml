@@ -1,0 +1,238 @@
+---
+title: Microsoft Edge
+description: Remove Microsoft Edge and block its reinstall path
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'Removing Microsoft Edge...'}
+
+  # KILL ALL EDGE PROCESSES
+  - !taskKill: {name: 'msedge', errorAction: Ignore}
+  - !taskKill: {name: 'msedgewebview2', errorAction: Ignore}
+  - !taskKill: {name: 'MicrosoftEdge*', errorAction: Ignore}
+  - !taskKill: {name: 'MicrosoftEdgeUpdate', errorAction: Ignore}
+  - !taskKill: {name: 'MicrosoftEdgeElevationService', errorAction: Ignore}
+  - !taskKill: {name: 'edge_core', errorAction: Ignore}
+  - !taskKill: {name: 'msedgeupdater', errorAction: Ignore}
+  - !taskKill: {name: 'MicrosoftEdgeUpdateCom', errorAction: Ignore}
+
+  # DELETE EDGE SERVICES
+  - !service: {name: 'edgeupdate', operation: delete, errorAction: Ignore}
+  - !service: {name: 'edgeupdatem', operation: delete, errorAction: Ignore}
+  - !service: {name: 'MicrosoftEdgeElevationService', operation: delete, errorAction: Ignore}
+  - !service: {name: 'MicrosoftEdgeUpdateService', operation: delete, errorAction: Ignore}
+
+  # UNINSTALL EDGE VIA SETUP.EXE (hidden window + kill spawned browser)
+  - !powerShell:
+    command: >-
+      $edgeUpdate = "${env:ProgramFiles(x86)}\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe";
+      if (Test-Path $edgeUpdate) {
+        Start-Process $edgeUpdate -ArgumentList '/uninstall','/system-level','/force-uninstall' -WindowStyle Hidden -Wait
+      }
+      Start-Sleep -Seconds 3;
+      Get-Process -Name 'msedge','MicrosoftEdgeUpdate' -ErrorAction SilentlyContinue | Stop-Process -Force
+    errorAction: Ignore
+
+  # REMOVE EDGE APPX PACKAGES
+  - !appx: {name: 'Microsoft.MicrosoftEdge.Stable*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.MicrosoftEdgeDevToolsClient*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.Edge*', type: family, errorAction: Ignore}
+  - !appx: {name: 'MicrosoftEdge*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.MicrosoftEdge.Beta*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.MicrosoftEdge.Canary*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.MicrosoftEdgeDev*', type: family, errorAction: Ignore}
+
+  # REMOVE EDGE FILES - ALL LOCATIONS
+  - !powerShell:
+    command: >-
+      $paths = @(
+        "$env:SystemDrive\Users\Public\Desktop\Microsoft Edge.lnk",
+        "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk",
+        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk",
+        "$env:SystemRoot\system32\MicrosoftEdgeBCHost.exe",
+        "$env:SystemRoot\system32\MicrosoftEdgeCP.exe",
+        "$env:SystemRoot\system32\MicrosoftEdgeDevTools.exe",
+        "$env:SystemRoot\system32\MicrosoftEdgeSH.exe",
+        "$env:SystemRoot\system32\ie_storagetrusted.exe",
+        "$env:SystemRoot\system32\MicrosoftEdgeCPBroker.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge",
+        "${env:ProgramFiles(x86)}\Microsoft\EdgeUpdate",
+        "${env:ProgramFiles(x86)}\Microsoft\EdgeCore",
+        "${env:ProgramFiles}\Microsoft\Edge",
+        "${env:ProgramFiles}\Microsoft\EdgeUpdate",
+        "${env:ProgramFiles}\Microsoft\EdgeCore",
+        "$env:LOCALAPPDATA\Microsoft\Edge",
+        "$env:LOCALAPPDATA\Microsoft\EdgeUpdate",
+        "$env:LOCALAPPDATA\Microsoft\EdgeCrashReports",
+        "$env:APPDATA\Microsoft\Edge",
+        "$env:SystemRoot\SystemApps\Microsoft.MicrosoftEdge_*",
+        "$env:SystemRoot\SystemApps\MicrosoftEdge_*",
+        "$env:ProgramData\Microsoft\Edge",
+        "$env:ProgramData\Microsoft\EdgeUpdate",
+        "$env:SystemRoot\Temp\MicrosoftEdge",
+        "$env:TEMP\MicrosoftEdge"
+      );
+      foreach ($p in $paths) {
+        if (Test-Path $p) {
+          try { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
+      }
+    errorAction: Ignore
+
+  # FORCE DELETE - take ownership of anything the uninstaller left locked
+  - !powerShell:
+    command: >-
+      $dirs = @(
+        "${env:ProgramFiles(x86)}\Microsoft\Edge",
+        "${env:ProgramFiles(x86)}\Microsoft\EdgeUpdate",
+        "${env:ProgramFiles(x86)}\Microsoft\EdgeCore",
+        "${env:ProgramFiles}\Microsoft\Edge",
+        "$env:LOCALAPPDATA\Microsoft\Edge",
+        "$env:APPDATA\Microsoft\Edge",
+        "$env:ProgramData\Microsoft\Edge",
+        "$env:SystemRoot\SystemApps\Microsoft.MicrosoftEdge_8wekyb3d8bbwe"
+      );
+      foreach ($d in $dirs) {
+        if (Test-Path $d) {
+          takeown.exe /F $d /R /A /D Y 2>$null | Out-Null;
+          icacls.exe $d /grant *S-1-5-32-544:F /T /C 2>$null | Out-Null;
+          Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
+        }
+      }
+    errorAction: Ignore
+
+  # EDGE UPDATE SCHEDULED TASKS
+  - !scheduledTask: {path: '\Microsoft\EdgeUpdate\MicrosoftEdgeUpdateTaskMachineCore', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\EdgeUpdate\MicrosoftEdgeUpdateTaskMachineUA', operation: delete, errorAction: Ignore}
+  - !powerShell:
+    command: 'Get-ScheduledTask | Where-Object { $_.TaskPath -match ''EdgeUpdate'' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue'
+    errorAction: Ignore
+
+  # REMOVE EDGE REGISTRY
+  - !registryKey: {path: 'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge Update', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Edge', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\WOW6432Node\Microsoft\Edge', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKCR\MSEdgePDF', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKCR\MSEdgeMHT', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Clients\StartMenuInternet\Microsoft Edge', operation: delete, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\RegisteredApplications', value: 'Microsoft Edge', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msedge.exe', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msedgewebview2.exe', operation: delete, errorAction: Ignore}
+
+  # Prevent Edge reinstall
+  - !registryValue: {path: 'HKLM\Software\Policies\Microsoft\EdgeUpdate', value: 'InstallDefault', data: '0', type: REG_DWORD, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\Software\Policies\Microsoft\EdgeUpdate', value: 'UpdateDefault', data: '0', type: REG_DWORD, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\Software\Policies\Microsoft\EdgeUpdate', value: 'CreateDesktopShortcutDefault', data: '0', type: REG_DWORD, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\EdgeUpdate', value: 'DoNotUpdateToEdgeWithChromium', data: '1', type: REG_DWORD, errorAction: Ignore}
+
+  # Strip NoRemove/NoModify from Edge Uninstall key (allows removal)
+  - !registryValue: {path: 'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge', value: 'NoRemove', operation: delete, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge', value: 'NoModify', operation: delete, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge', value: 'NoRepair', operation: delete, errorAction: Ignore}
+
+  # Allow uninstall via EdgeUpdateDev policy
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdateDev', value: 'AllowUninstall', data: '1', type: REG_DWORD, errorAction: Ignore}
+
+  # Block Edge via App execution aliases
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\AppExecutionAlias\msedge', value: 'AppExecutionAlias', data: '', operation: delete, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\AppExecutionAlias\msedgebeta', value: 'AppExecutionAlias', data: '', operation: delete, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\AppExecutionAlias\msedgecanary', value: 'AppExecutionAlias', data: '', operation: delete, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\AppExecutionAlias\msedgewebview', value: 'AppExecutionAlias', data: '', operation: delete, errorAction: Ignore}
+
+  # REMOVE EDGE SCHEDULED TASKS
+  - !cmd:
+    command: 'schtasks /Delete /TN "\Microsoft\EdgeUpdate\*" /F 2>nul'
+    errorAction: Ignore
+  - !powerShell:
+    command: 'Get-ScheduledTask | Where-Object { $_.TaskName -like ''*MicrosoftEdge*'' -or $_.TaskName -like ''*EdgeUpdate*'' -or $_.TaskPath -like ''*MicrosoftEdge*'' } | ForEach-Object { Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue }'
+    runas: currentUserElevated
+    errorAction: Ignore
+
+  # BLOCK EDGE PROTOCOL HANDLERS
+  - !registryKey: {path: 'HKLM\SOFTWARE\Classes\microsoft-edge', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Classes\MSEdgeHTM', operation: delete, errorAction: Ignore}
+  - !registryKey: {path: 'HKCR\microsoft-edge', operation: delete, errorAction: Ignore}
+
+  # Deprovisioned - prevent Windows Update from reinstalling Edge
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.MicrosoftEdgeDevToolsClient_8wekyb3d8bbwe', operation: add, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe', operation: add, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.MicrosoftEdge.Beta_8wekyb3d8bbwe', operation: add, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.MicrosoftEdge.Canary_8wekyb3d8bbwe', operation: add, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.MicrosoftEdge.Dev_8wekyb3d8bbwe', operation: add, errorAction: Ignore}
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.MicrosoftEdgeDevToolsClient_8wekyb3d8bbwe', operation: add, errorAction: Ignore}
+
+  # Fake Edge executable in SystemApps to block re-registration
+  - !powerShell:
+    command: >-
+      $fakePath = "$env:SystemRoot\SystemApps\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\MicrosoftEdge.exe";
+      $null = New-Item -Path (Split-Path $fakePath -Parent) -ItemType Directory -Force -ErrorAction SilentlyContinue;
+      Set-Content -Path $fakePath -Value "" -Encoding ASCII -ErrorAction SilentlyContinue;
+      attrib +R +S +H $fakePath;
+    errorAction: Ignore
+
+  # Delete EdgeUpdate task files from disk (not just unregister)
+  - !powerShell:
+    command: >-
+      $taskFiles = @(
+        "$env:SystemRoot\System32\Tasks\MicrosoftEdgeUpdateTaskMachineCore",
+        "$env:SystemRoot\System32\Tasks\MicrosoftEdgeUpdateTaskMachineUA",
+        "$env:SystemRoot\System32\Tasks\MicrosoftEdgeUpdateBrowserReplacementTask",
+        "$env:SystemRoot\System32\Tasks\MicrosoftEdgeUpdateTaskMachineCoreSystem",
+        "$env:SystemRoot\System32\Tasks\Microsoft\EdgeUpdate"
+      );
+      foreach ($tf in $taskFiles) {
+        if (Test-Path $tf) {
+          try { takeown.exe /F $tf /A 2>&1 | Out-Null } catch {}
+          try { icacls.exe $tf /grant Administrators:F 2>&1 | Out-Null } catch {}
+          try { Remove-Item $tf -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
+      }
+    errorAction: Ignore
+
+  # NTFS deny permissions on Edge directories — blocks re-creation
+  - !powerShell:
+    command: >-
+      $edgeDirs = @(
+        "${env:ProgramFiles(x86)}\Microsoft\Edge",
+        "${env:ProgramFiles(x86)}\Microsoft\EdgeUpdate",
+        "${env:ProgramFiles(x86)}\Microsoft\EdgeCore",
+        "$env:ProgramFiles\Microsoft\Edge",
+        "$env:ProgramFiles\Microsoft\EdgeUpdate",
+        "$env:ProgramFiles\Microsoft\EdgeCore"
+      );
+      foreach ($d in $edgeDirs) {
+        if (-not (Test-Path $d)) { $null = New-Item -Path $d -ItemType Directory -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $d) {
+          try { icacls.exe $d /deny "SYSTEM:(OI)(CI)(F)" /T /C 2>&1 | Out-Null } catch {}
+        }
+      }
+    errorAction: Ignore
+
+  # Block Edge telemetry/update servers in hosts file
+  - !powerShell:
+    command: >-
+      $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts";
+      $entries = @(
+        "0.0.0.0 edge.microsoft.com",
+        "0.0.0.0 msedge.api.cdp.microsoft.com",
+        "0.0.0.0 msedge.api.microsoft.com",
+        "0.0.0.0 edge.copilot.microsoft.com",
+        "0.0.0.0 dl.delivery.mp.microsoft.com",
+        "0.0.0.0 dl.delivery.mp.microsoft.com.footprintdns.com",
+        "0.0.0.0 msedge.f.dl.delivery.mp.microsoft.com",
+        "0.0.0.0 config.edge.skype.com",
+        "0.0.0.0 edge.microsoft.com.edgesuite.net",
+        "0.0.0.0 browser.events.data.microsoft.com",
+        "0.0.0.0 settings-win.data.microsoft.com"
+      );
+      $content = Get-Content $hostsPath -Raw -ErrorAction SilentlyContinue;
+      $changed = $false;
+      foreach ($e in $entries) {
+        if ($content -notmatch [regex]::Escape($e)) {
+          Add-Content $hostsPath "`n$e" -ErrorAction SilentlyContinue;
+          $changed = $true;
+        }
+      }
+    errorAction: Ignore

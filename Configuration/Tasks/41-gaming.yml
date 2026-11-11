@@ -1,0 +1,30 @@
+﻿---
+title: Gaming Baseline
+description: AFD socket buffers and write cache - safe for every profile
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'Applying gaming baseline...'}
+
+  # AFD NETWORK - socket buffers sized for low-latency game traffic
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\AFD\Parameters', value: 'DefaultReceiveWindow', type: REG_DWORD, data: '16384', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\AFD\Parameters', value: 'DefaultSendWindow', type: REG_DWORD, data: '16384', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\AFD\Parameters', value: 'FastCopyReceiveThreshold', type: REG_DWORD, data: '1024', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\AFD\Parameters', value: 'FastSendDatagramThreshold', type: REG_DWORD, data: '1024', errorAction: Ignore}
+
+  # WRITE CACHE - enable for all drives
+  - !powerShell:
+    command: >-
+      Get-WmiObject Win32_DiskDrive | ForEach-Object {
+        $disk = $_.Index;
+        $partitions = "HKLM:\SYSTEM\CurrentControlSet\Services\disk\Enum";
+        Get-ItemProperty $partitions -ErrorAction SilentlyContinue | ForEach-Object {
+          $_.PSObject.Properties | Where-Object { $_.Value -like "*$disk*" } | ForEach-Object {
+            $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}\$($_.Name.Substring($_.Name.LastIndexOf('\')+1))";
+            if (Test-Path $regPath) {
+              Set-ItemProperty $regPath -Name 'WriteCacheEnabled' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+            }
+          }
+        }
+      }
+    errorAction: Ignore

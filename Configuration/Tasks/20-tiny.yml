@@ -1,0 +1,121 @@
+---
+title: AtomOS Tiny
+description: Extreme tier - hypervisor off, mitigations off, hibernation and recovery removed, pagefile off
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'AtomOS Tiny: applying the extreme layer...'}
+
+  # ===============================================================
+  # 1. HYPERVISOR AND CPU MITIGATIONS
+  # The largest single RAM win available (1-3 GB) and the largest single
+  # compatibility decision: WSL2, Docker, Hyper-V and some anti-cheats
+  # stop working. This is why it is Tiny-only.
+  # ===============================================================
+  - !run: {exe: 'bcdedit', args: '/set {current} hypervisorlaunchtype off', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management', value: 'FeatureSettingsOverride', type: REG_DWORD, data: '3', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management', value: 'FeatureSettingsOverrideMask', type: REG_DWORD, data: '3', errorAction: Ignore}
+
+  # ===============================================================
+  # 2. MEMORY COMPRESSION - ON
+  # 0.0.8 disabled it and Tiny kept that; on a 4-8 GB machine it makes
+  # RAM usage look high (compressed pages are the cheapest RAM saving
+  # Windows has). Re-enabled here, and explicitly, so a re-run undoes
+  # an older install that disabled it.
+  # ===============================================================
+  - !powerShell: {command: 'Enable-MMAgent -MemoryCompression', errorAction: Ignore}
+
+  # ===============================================================
+  # 3. HIBERNATION
+  # ===============================================================
+  - !run: {exe: 'powercfg', args: '/h off', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'HibernateEnabledDefault', type: REG_DWORD, data: '0', errorAction: Ignore}
+
+  # ===============================================================
+  # 4. PAGEFILE - DISABLED ON TINY
+  # No paging file: frees a RAM-sized chunk of disk and removes paging
+  # I/O. This is an explicit Tiny-only trade. On a low-RAM machine it
+  # can cause out-of-memory crashes - revert with
+  # PostInstall\0 Start\10 Enable Paging File - USE IF YOU ARE FACING WEIRD CRASHES.bat
+  # ===============================================================
+  - !powerShell:
+    command: |
+      $mm = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management'
+      Set-ItemProperty -Path $mm -Name 'AutomaticManagedPagefile' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+      Set-ItemProperty -Path $mm -Name 'PagingFiles' -Value ([string[]]@()) -Force -ErrorAction SilentlyContinue
+      Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -Name 'CrashDumpEnabled' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+    errorAction: Ignore
+
+  # ===============================================================
+  # 5. RECOVERY SURFACE
+  # WinRE is disabled first (reagentc), so Windows stops referencing an
+  # image we are about to delete. ~500 MB back. System Restore goes too.
+  # ===============================================================
+  - !run: {exe: 'reagentc.exe', args: '/disable', errorAction: Ignore}
+  - !powerShell:
+    command: |
+      $paths = @(
+        "$env:SystemRoot\System32\Recovery\Winre.wim",
+        "$env:SystemDrive\Recovery",
+        "$env:SystemDrive\`$WinREAgent"
+      )
+      foreach ($p in $paths) {
+        if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+      }
+    errorAction: Ignore
+
+  - !run: {exe: 'bcdedit', args: '/set {current} recoveryenabled no', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore', value: 'DisableSR', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore', value: 'RPSessionInterval', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore', value: 'DisableConfig', type: REG_DWORD, data: '1', errorAction: Ignore}
+
+  # ===============================================================
+  # 6. COMPONENT STORE - safe cleanup before compression
+  # StartComponentCleanup only. No /ResetBase: that would make every
+  # installed update permanent and uninstallable.
+  # ===============================================================
+  - !run: {exe: 'DISM.exe', args: '/Online /Cleanup-Image /StartComponentCleanup /NoRestart', wait: true, errorAction: Ignore}
+
+  # ===============================================================
+  # 6. BACKGROUND DELIVERY AND MAINTENANCE
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization', value: 'DODownloadMode', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !service: {name: 'DoSvc', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'WaaSMedicSvc', operation: change, startup: 4, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\StorageSense', value: 'AllowStorageSenseGlobal', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\Maintenance', value: 'NoAutomaticMaintenance', type: REG_DWORD, data: '1', errorAction: Ignore}
+
+  # ===============================================================
+  # 7. INPUT PATH
+  # A shorter class-driver queue delivers input sooner at the cost of
+  # burst tolerance. 21 is the smallest value that survives keyboard
+  # rollover; the keyboard thread runs at realtime priority.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\mouclass\Parameters', value: 'MouseDataQueueSize', type: REG_DWORD, data: '21', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters', value: 'KeyboardDataQueueSize', type: REG_DWORD, data: '21', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters', value: 'ThreadPriority', type: REG_DWORD, data: '31', errorAction: Ignore}
+
+  # ===============================================================
+  # 8. FULLSCREEN OPTIMISATIONS
+  # Tiny forces the legacy exclusive-fullscreen path. Lite leaves the
+  # compositor decision to the game, because FSO off breaks alt-tab and
+  # some borderless-window titles.
+  # ===============================================================
+  - !registryValue: {path: 'HKCU\System\GameConfigStore', value: 'GameDVR_FSEBehaviorMode', type: REG_DWORD, data: '2', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\System\GameConfigStore', value: 'GameDVR_HonorUserFSEBehaviorMode', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\System\GameConfigStore', value: 'GameDVR_FSEBehavior', type: REG_DWORD, data: '2', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\System\GameConfigStore', value: 'GameDVR_DXGIHonorFSEWindowsCompatible', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\System\GameConfigStore', value: 'GameDVR_EFSEFeatureFlags', type: REG_DWORD, data: '0', errorAction: Ignore}
+
+  # ===============================================================
+  # 9. SCHEDULED TASK SURFACE
+  # ===============================================================
+  - !scheduledTask: {path: '\Microsoft\Windows\Defrag\ScheduledDefrag', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\DiskFootprint\Diagnostics', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\Autochk\Proxy', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\Sysmain\HybridDriveCachePrepopulate', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\Sysmain\ResPriStaticDbSync', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\Sysmain\WsSwapAssessmentTask', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\Windows Error Reporting\QueueReporting', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\Application Experience\PcaPatchDbTask', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\Application Experience\StartupAppTask', operation: delete, errorAction: Ignore}

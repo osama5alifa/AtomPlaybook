@@ -1,0 +1,54 @@
+---
+title: AtomOS Standard
+description: Clean and stable - guardrail services restored to Windows defaults, UAC behaviour left intact
+privilege: TrustedInstaller
+actions:
+
+  # Kill the legacy Help pane (requested)
+  - !cmd: {command: 'taskkill /f /im HelpPane.exe 2>nul & takeown /f "%WinDir%\HelpPane.exe" 2>nul & icacls "%WinDir%\HelpPane.exe" /deny Everyone:(X) 2>nul', errorAction: Ignore}
+
+  - !status: {status: 'AtomOS Standard: restoring Windows guardrails...'}
+
+  # ===============================================================
+  # 1. SERVICES BACK TO THEIR WINDOWS STARTUP TYPE
+  # The shared spine trims the telemetry and cloud surface. Standard
+  # additionally guarantees that nothing a normal user or installer
+  # relies on stays off.
+  # ===============================================================
+  - !service: {name: 'VSS', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'W32Time', operation: change, startup: 2, errorAction: Ignore}
+  - !service: {name: 'defragsvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'WbioSrvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'WaaSMedicSvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'DPS', operation: change, startup: 2, errorAction: Ignore}
+  - !service: {name: 'wmiApSrv', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'EventSystem', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'SysMain', operation: change, startup: 2, errorAction: Ignore}
+  - !service: {name: 'Themes', operation: change, startup: 2, errorAction: Ignore}
+  - !service: {name: 'FontCache', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'AppIDSvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'ShellHWDetection', operation: change, startup: 2, errorAction: Ignore}
+  - !service: {name: 'LicenseManager', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'VaultSvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'NVDisplay.ContainerLocalSystem', operation: change, startup: 2, errorAction: Ignore}
+  # Brightness slider needs this service; the shared floor disables it
+  - !service: {name: 'DisplayEnhancementService', operation: change, startup: 3, errorAction: Ignore}
+
+  # ===============================================================
+  # 2. UAC - standard behaviour
+  # Tiny and Lite keep silent elevation for uninterrupted gaming.
+  # Standard keeps the secure desktop and the consent prompt.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', value: 'EnableLUA', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', value: 'ConsentPromptBehaviorAdmin', type: REG_DWORD, data: '5', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', value: 'PromptOnSecureDesktop', type: REG_DWORD, data: '1', errorAction: Ignore}
+
+  # ===============================================================
+  # 3. RECOVERY
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore', value: 'DisableSR', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\CrashControl', value: 'CrashDumpEnabled', type: REG_DWORD, data: '7', errorAction: Ignore}
+  - !run: {exe: 'bcdedit', args: '/set {current} bootstatuspolicy displayallfailures', errorAction: Ignore}
+
+  # Power and sleep are deliberately not written by Standard: whatever the
+  # machine shipped with stays in place.

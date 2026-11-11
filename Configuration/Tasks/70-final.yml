@@ -1,0 +1,243 @@
+---
+title: Final Cleanup
+description: Cleanup, scheduled tasks, OEM identity and the final shell restart
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'Running aggressive cleanup...'}
+
+  # ResetBase removes superseded components. Lite and Tiny only - Standard keeps
+  # updates uninstallable. This is the biggest single WinSxS reduction.
+  - !run: {exe: 'DISM.exe', args: '/Online /Cleanup-Image /StartComponentCleanup /ResetBase /NoRestart', wait: true, errorAction: Ignore, options: [profile-tiny, profile-light]}
+
+  # MASTER CLEANUP — OneDrive, Edge, WinRE, Paging, Reserved Storage, Disk, WinSxS
+  # Run directly as TrustedInstaller (AME's default runas). NSudoLC was an
+  # extra unsigned launcher in front of this; when Smart App Control or
+  # Defender blocked it, the whole cleanup silently did nothing.
+  - !run:
+    exeDir: true
+    exe: 'PowerShell.exe'
+    args: '-NoProfile -ExecutionPolicy Bypass -File CLEANUP.ps1'
+    wait: true
+    errorAction: Ignore
+
+  # FULL WINSXS + EXTREME CLEANUP (AtomOS Tiny only: WinRE, paging file,
+  # reserved storage and component-store cleanup)
+  - !status: {status: 'AtomOS Tiny: running extreme cleanup...', option: profile-tiny}
+  - !run:
+    exeDir: true
+    exe: 'PowerShell.exe'
+    args: '-NoProfile -ExecutionPolicy Bypass -File CLEANUP.ps1 -FullWinSxS -Extreme'
+    wait: true
+    errorAction: Ignore
+    option: profile-tiny
+
+  # ===============================================================
+  # 4. WINDOWS UPDATE REPAIR (Standard only)
+  # Runs after cleanup so the reset caches are not wiped again.
+  # ===============================================================
+  - !status: {status: 'AtomOS Standard: repairing Windows Update...', option: profile-standard}
+  - !service: {name: 'wuauserv', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'BITS', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'CryptSvc', operation: change, startup: 2, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'msiserver', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'UsoSvc', operation: change, startup: 2, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'WaaSMedicSvc', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'TrustedInstaller', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'AppXSvc', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'ClipSVC', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'StateRepository', operation: change, startup: 2, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'TokenBroker', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !service: {name: 'InstallService', operation: change, startup: 3, errorAction: Ignore, option: profile-standard}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', value: 'NoAutoUpdate', operation: delete, errorAction: Ignore, option: profile-standard}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', value: 'AUOptions', operation: delete, errorAction: Ignore, option: profile-standard}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', value: 'DisableWindowsUpdateAccess', operation: delete, errorAction: Ignore, option: profile-standard}
+  - !cmd: {command: 'schtasks /Change /TN "\Microsoft\Windows\WindowsUpdate\Scheduled Start" /Enable 2>nul & schtasks /Change /TN "\Microsoft\Windows\UpdateOrchestrator\Schedule Scan" /Enable 2>nul', errorAction: Ignore, option: profile-standard}
+  - !powerShell:
+    command: |
+      $svc = @('wuauserv','bits','cryptsvc','msiserver','usosvc','waasmedicsvc','trustedinstaller','appxsvc','clipsvc','staterepository','tokenbroker','installservice')
+      foreach ($s in $svc) { Stop-Service $s -Force -ErrorAction SilentlyContinue }
+      $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+      foreach ($p in @("$env:SystemRoot\SoftwareDistribution", "$env:SystemRoot\System32\catroot2")) {
+          if (Test-Path $p) { Rename-Item -Path $p -NewName ((Split-Path $p -Leaf) + '.atom-' + $stamp) -ErrorAction SilentlyContinue }
+      }
+      foreach ($s in $svc) { Start-Service $s -ErrorAction SilentlyContinue }
+      & usoclient.exe StartScan 2>$null
+    errorAction: Ignore
+    option: profile-standard
+
+  # DISK CLEANUP — ADDITIONAL TEMP FILES, LOGS, CACHE
+  - !status: {status: 'Cleaning disk space...'}
+  - !cmd:
+    command: 'del /q /f /s "%TEMP%\*" 2>nul & del /q /f /s "%WINDIR%\Temp\*" 2>nul & del /q /f /s "%WINDIR%\Prefetch\*" 2>nul & del /q /f /s "%WINDIR%\Logs\*.log" 2>nul & del /q /f /s "%LOCALAPPDATA%\Microsoft\Windows\INetCache\*" 2>nul & del /q /f /s "%LOCALAPPDATA%\Microsoft\Windows\Temporary Internet Files\*" 2>nul & del /q /f /s "%WINDIR%\Minidump\*" 2>nul & del /q /f /s "%WINDIR%\MEMORY.DMP" 2>nul & del /q /f /s "%LOCALAPPDATA%\CrashDumps\*" 2>nul'
+    errorAction: Ignore
+
+  # DISABLE SCHEDULED TASKS
+  - !status: {status: 'Disabling scheduled tasks...'}
+  - !cmd:
+    command: 'schtasks /Change /TN "\Microsoft\Windows\Power Efficiency Diagnostics\AnalyzeSystem" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\MemoryDiagnostic\ProcessMemoryDiagnosticEvents" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\MemoryDiagnostic\RunFullMemoryDiagnostic" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\Windows Error Reporting\QueueReporting" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\Application Experience\AitAgent" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\Customer Experience Improvement Program\Consolidator" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask" /Disable 2>nul'
+    errorAction: Ignore
+
+  - !cmd:
+    command: 'schtasks /Change /TN "\Microsoft\Windows\WindowsUpdate\Scheduled Start" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\UpdateOrchestrator\StartOobeAppsScanAfterUpdate" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\UpdateOrchestrator\Start Oobe Expedite Work" /Disable 2>nul & schtasks /Change /TN "\Microsoft\Windows\UpdateOrchestrator\Schedule Scan" /Disable 2>nul'
+    errorAction: Ignore
+    option: profile-tiny
+
+  # Bulk disable remaining tasks via PowerShell (wildcard)
+  - !powerShell:
+    command: 'Get-ScheduledTask | Where-Object { $_.TaskPath -match ''\\Microsoft\\Windows\\Application Experience\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\Autochk\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\CloudExperienceHost\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\Customer Experience Improvement Program\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\DiskDiagnostic\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\Feedback\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\Maps\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\Office\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\PI\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\Power Efficiency Diagnostics\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\Windows Error Reporting\\'' } | Disable-ScheduledTask -ErrorAction SilentlyContinue'
+    runas: currentUserElevated
+    errorAction: Ignore
+
+  - !powerShell:
+    command: 'Get-ScheduledTask | Where-Object { $_.TaskPath -match ''\\Microsoft\\XblGameSave\\'' } | Disable-ScheduledTask -ErrorAction SilentlyContinue'
+    runas: currentUserElevated
+    errorAction: Ignore
+
+  - !powerShell:
+    command: 'Get-ScheduledTask | Where-Object { $_.TaskPath -match ''\\Microsoft\\Windows\\WindowsUpdate\\'' -or $_.TaskPath -match ''\\Microsoft\\Windows\\UpdateOrchestrator\\'' } | Disable-ScheduledTask -ErrorAction SilentlyContinue'
+    runas: currentUserElevated
+    errorAction: Ignore
+    option: profile-tiny
+
+  # TELEMETRY OPT-OUT ENVIRONMENT VARIABLES
+  - !cmd: {command: 'setx DOTNET_CLI_TELEMETRY_OPTOUT 1', errorAction: Ignore}
+  - !cmd: {command: 'setx POWERSHELL_TELEMETRY_OPTOUT 1', errorAction: Ignore}
+
+  # FORCE GROUP POLICY UPDATE
+  - !run: {exe: 'gpupdate.exe', wait: true, errorAction: Ignore}
+
+  # BLOCK WINDOWS FROM REINSTALLING BLOATWARE
+  - !status: {status: 'Blocking bloatware reinstallation via Windows Update...'}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Outlook', type: REG_SZ, data: 'MS_Outlook', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Copilot', type: REG_SZ, data: 'MS_Copilot', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_CopilotUpdate', type: REG_SZ, data: 'MS_CopilotUpdate', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_WindowsCopilot', type: REG_SZ, data: 'MS_WindowsCopilot', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_WindowsAIX', type: REG_SZ, data: 'MS_WindowsAIX', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_WindowsPhoton', type: REG_SZ, data: 'MS_WindowsPhoton', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_DevHome', type: REG_SZ, data: 'MS_DevHome', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Clipchamp', type: REG_SZ, data: 'MS_Clipchamp', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Recall', type: REG_SZ, data: 'MS_Recall', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_OneDrive', type: REG_SZ, data: 'MS_OneDrive', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Teams', type: REG_SZ, data: 'MS_Teams', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_WindowsStore', type: REG_SZ, data: 'MS_WindowsStore', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Xbox', type: REG_SZ, data: 'MS_Xbox', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_News', type: REG_SZ, data: 'MS_News', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Weather', type: REG_SZ, data: 'MS_Weather', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_StickyNotes', type: REG_SZ, data: 'MS_StickyNotes', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Skype', type: REG_SZ, data: 'MS_Skype', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_Edge', type: REG_SZ, data: 'MS_Edge', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\OobeUpdaters\BlockedOobeUpdaters', value: 'MS_WindowsBackup', type: REG_SZ, data: 'MS_WindowsBackup', errorAction: Ignore}
+  - !run: {exe: 'schtasks', args: '/Delete /TN "\Microsoft\Windows\AppxAllUserStore\UScheduler" /F 2>nul', errorAction: Ignore}
+
+  # OEM INFO
+  - !status: {status: 'Setting OEM information...'}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation', value: 'Manufacturer', type: REG_SZ, data: 'Project Atom', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation', value: 'Model', type: REG_SZ, data: '', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation', value: 'SupportURL', type: REG_SZ, data: '', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion', value: 'RegisteredOwner', type: REG_SZ, data: 'Project Atom', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion', value: 'RegisteredOrganization', type: REG_SZ, data: '', errorAction: Ignore}
+
+  # SET C: DRIVE LABEL
+  - !status: {status: 'Setting C: drive label to Project Atom...'}
+  - !run: {exe: 'label', args: 'C: "Project Atom"', errorAction: Ignore}
+
+  # APP INSTALLER (winget) - no profile removes it. Re-register it if something
+  # else broke it, so winget and the browser step keep working.
+  - !powerShell:
+    command: |
+      $pkg = Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue
+      if (-not $pkg) {
+        $dir = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.DesktopAppInstaller_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($dir) {
+          $manifest = Join-Path $dir.FullName 'AppxManifest.xml'
+          if (Test-Path $manifest) { Add-AppxPackage -DisableDevelopmentMode -Register $manifest -ErrorAction SilentlyContinue }
+        }
+      }
+    errorAction: Ignore
+  # ===============================================================
+  # SHORTCUT CLEANUP
+  # Remove Start Menu, Desktop and taskbar shortcuts whose target no
+  # longer exists (Store, Xbox, Edge, OneDrive, Copilot, Terminal, ...).
+  # ===============================================================
+  - !powerShell:
+    command: |
+      $roots = @(
+        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
+        "$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
+        "$env:USERPROFILE\Desktop",
+        "$env:PUBLIC\Desktop",
+        "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+      )
+      $w = New-Object -ComObject WScript.Shell
+      foreach ($root in $roots) {
+          if (-not (Test-Path $root)) { continue }
+          Get-ChildItem -Path $root -Recurse -Filter *.lnk -Force -ErrorAction SilentlyContinue | ForEach-Object {
+              $target = $null
+              try { $target = $w.CreateShortcut($_.FullName).TargetPath } catch {}
+              if ($target -and -not (Test-Path $target)) {
+                  Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+              }
+          }
+      }
+      # Terminal and Edge shortcuts always go, even if the stub target survives
+      foreach ($root in $roots) {
+          if (-not (Test-Path $root)) { continue }
+          Get-ChildItem -Path $root -Recurse -Filter *.lnk -Force -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match 'Windows Terminal|Microsoft Edge' } |
+              ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+      }
+    runas: currentUserElevated
+    errorAction: Ignore
+
+  # WRITE A VERIFICATION REPORT — proves what actually landed.
+  # Inline on purpose: the extraction folder may already be deleted here.
+  - !status: {status: 'AtomOS: verifying the result...'}
+  - !powerShell:
+    command: |
+      $r = @()
+      $r += "AtomOS verification report"
+      $r += ("Generated : " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+      $r += ("Windows   : " + (Get-CimInstance Win32_OperatingSystem).Caption + " build " + [Environment]::OSVersion.Version.Build)
+      $r += ""
+      $r += ("C: free            : " + [math]::Round((Get-PSDrive C).Free / 1GB, 1) + " GB")
+      $res = ((& DISM.exe /Online /Get-ReservedStorageState 2>$null) -join ' ')
+      $r += ("Reserved storage   : " + $(if ($res -match 'Disabled') { 'DISABLED' } else { 'still enabled/unknown' }))
+      $pf = Get-CimInstance Win32_PageFileUsage
+      $r += ("Pagefile           : " + $(if ($pf) { 'PRESENT (' + $pf.AllocatedBaseSize + ' MB)' } else { 'ABSENT' }))
+      $r += ("hiberfil.sys       : " + $(if (Test-Path "$env:SystemDrive\hiberfil.sys") { 'PRESENT' } else { 'absent' }))
+      $re = ((& reagentc.exe /info 2>$null) -join ' ')
+      $r += ("WinRE              : " + $(if ($re -match 'Disabled') { 'DISABLED' } else { 'enabled/unknown' }))
+      $co = ((& compact.exe /CompactOS:query 2>$null) -join ' ')
+      $r += ("CompactOS          : " + $(if ($co -match 'Always') { 'ALWAYS' } else { 'not set' }))
+      $r += ("Memory compression : " + (Get-MMAgent).MemoryCompression)
+      $r += ("Edge               : " + $(if (Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") { 'PRESENT' } else { 'absent' }))
+      $r += ("OneDrive setup     : " + $(if (Test-Path "$env:SystemRoot\System32\OneDriveSetup.exe") { 'PRESENT' } else { 'absent' }))
+      $r += ("Copilot packages   : " + $(@(Get-AppxPackage -AllUsers *Copilot*).Count))
+      $r += ("App Installer      : " + $(if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue) { 'present' } else { 'MISSING' }))
+      $r += ("winget             : " + $(if (Get-Command winget -ErrorAction SilentlyContinue) { 'yes' } else { 'no' }))
+      $r += ("Atom tasks         : " + $(@(Get-ScheduledTask -TaskPath '\Atom\' -ErrorAction SilentlyContinue).Count))
+      $top = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue |
+             Where-Object { $_.Name -notin @('_Total','Idle') } |
+             Sort-Object PercentProcessorTime -Descending | Select-Object -First 3
+      $r += ("CPU top            : " + (($top | ForEach-Object { $_.Name + ' ' + $_.PercentProcessorTime + '%' }) -join ', '))
+      $r += ("C: used            : " + [math]::Round((Get-PSDrive C).Used / 1GB, 1) + " GB")
+      $big = @("$env:SystemRoot\WinSxS", "$env:SystemDrive\Windows.old", "$env:SystemRoot\Installer", "$env:ProgramData\Package Cache", "$env:SystemRoot\SoftwareDistribution")
+      foreach ($b in $big) {
+        if (Test-Path $b) {
+          $sz = (Get-ChildItem $b -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+          if ($sz -gt 0) { $r += ("Size " + (Split-Path $b -Leaf).PadRight(20) + ": " + [math]::Round($sz / 1GB, 2) + " GB") }
+        }
+      }
+      Set-Content -Path "$env:SystemDrive\AtomOS-Report.txt" -Value ($r -join "`r`n") -Encoding UTF8 -Force
+    errorAction: Ignore
+
+  # RESTART EXPLORER
+  - !status: {status: 'Done. Restarting Explorer...'}
+  - !powerShell:
+    command: |
+      Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Seconds 2
+      Start-Process explorer
+    runas: currentUserElevated
+    errorAction: Ignore

@@ -1,0 +1,151 @@
+---
+title: Tuned Latency Stack
+description: AtomOS Tiny and Lite - timer, scheduler, power, GPU and interrupt latency
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'AtomOS: installing the latency stack...'}
+
+  # ===============================================================
+  # 1. TIMER SUBSYSTEM
+  # The system tick is the floor under every sleep, wait and frame
+  # pacing decision. Dynamic ticks coalesce interrupts to save power;
+  # a gaming box wants them separate and predictable.
+  # ===============================================================
+  - !run: {exe: 'bcdedit', args: '/deletevalue useplatformclock', errorAction: Ignore}
+  - !run: {exe: 'bcdedit', args: '/set {current} nx optin', errorAction: Ignore}
+
+  # Allow a 0.5 ms request to become system-wide (Windows 10 2004+ behaviour)
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\kernel', value: 'GlobalTimerResolutionRequests', type: REG_DWORD, data: '1', errorAction: Ignore}
+
+  # ===============================================================
+  # 2. SCHEDULER AND MMCSS
+  # SystemResponsiveness=10 keeps 10% of the CPU for background work so
+  # audio and input are not starved, while MMCSS hands games a High
+  # scheduling category. 0 (v0.0.8) causes audio crackle under load.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile', value: 'SystemResponsiveness', type: REG_DWORD, data: '10', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile', value: 'NetworkThrottlingIndex', type: REG_DWORD, data: '4294967295', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile', value: 'NoLazyMode', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile', value: 'LazyModeTimeout', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games', value: 'GPU Priority', type: REG_DWORD, data: '8', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games', value: 'Priority', type: REG_DWORD, data: '6', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games', value: 'Scheduling Category', type: REG_SZ, data: 'High', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games', value: 'SFIO Priority', type: REG_SZ, data: 'High', errorAction: Ignore}
+
+  # Fewer svchost instances: lower process count and less working-set churn.
+  # 0xFFFFFFFF means "never split".
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control', value: 'SvcHostSplitThresholdInKB', type: REG_DWORD, data: '4294967295', errorAction: Ignore}
+
+  # ===============================================================
+  # 3. MEMORY MANAGER - hardware aware
+  # LargeSystemCache and page combining only pay off above 16 GB. On a
+  # smaller machine they cause paging stalls, so they are conditional.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management', value: 'DisablePagingExecutive', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !powerShell:
+    command: >-
+      $ram = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB);
+      if ($ram -ge 16) {
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name 'LargeSystemCache' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue;
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name 'DisablePageCombining' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+      }
+    errorAction: Ignore
+
+  # ===============================================================
+  # 4. POWER AND IDLE STATES
+  # Every C-state exit and core unpark is latency the player feels as
+  # stutter on the first frame after idle. Desktop tuning only: the
+  # battery-sensitive parts below are conditional on there being no
+  # battery present.
+  # ===============================================================
+  # MIN stays low so the CPU can idle; MAX 100 keeps boost available.
+  - !run: {exe: 'powercfg', args: '/setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN 5', errorAction: Ignore}
+  - !run: {exe: 'powercfg', args: '/setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX 100', errorAction: Ignore}
+  - !run: {exe: 'powercfg', args: '/setacvalueindex SCHEME_CURRENT SUB_PROCESSOR CPMINCORES 100', errorAction: Ignore}
+  - !run: {exe: 'powercfg', args: '/setactive SCHEME_CURRENT', errorAction: Ignore}
+  - !run: {exe: 'powercfg', args: '/setacvalueindex SCHEME_CURRENT SUB_PCIEXPRESS ASPM 0', errorAction: Ignore}
+  - !run: {exe: 'powercfg', args: '/setactive SCHEME_CURRENT', errorAction: Ignore}
+
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'PowerThrottlingOff', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling', value: 'PowerThrottlingOff', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'EnergyEstimationEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'EventProcessorEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'MSDisabled', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'ThermalTelemetryVerbosity', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'HiberbootEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'CsEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'PlatformAoAcOverride', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'AoAcRemotableEnable', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Power', value: 'AwayModeEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+
+  # USB and PCIe link power saving: off, so a mouse or DAC never waits for a resume
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\USB', value: 'SelectiveSuspendEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\pci\Parameters', value: 'ASPMOverride', type: REG_DWORD, data: '1', errorAction: Ignore}
+
+  # Storage link power management and NVMe idle states
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\storahci\Parameters\Device', value: 'HIPM', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\storahci\Parameters\Device', value: 'DIPM', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\nvme\Parameters\Device', value: 'EnableAPST', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\stornvme\Parameters\Device', value: 'IdlePowerMode', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\stornvme\Parameters\Device', value: 'DisableDSTThrottle', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Storage', value: 'StorageD3InModernStandby', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\spaceport\Parameters', value: 'IoLatencyCap', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Services\rdyboost\Parameters', value: 'StopPolling', type: REG_DWORD, data: '1', errorAction: Ignore}
+
+  # Desktop only: never sleep the display or the machine, never act on lid close
+  - !powerShell:
+    command: >-
+      if (-not (Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)) {
+        powercfg /change standby-timeout-ac 0;
+        powercfg /change monitor-timeout-ac 0;
+        powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0;
+        powercfg /setactive SCHEME_CURRENT
+      }
+    errorAction: Ignore
+
+  # ===============================================================
+  # 5. GRAPHICS AND PRESENT PATH
+  # TdrDelay 10 gives the driver time to recover instead of resetting
+  # mid-frame. TdrLevel 3 keeps recovery enabled - v0.0.8 disabled TDR
+  # entirely, which turns a recoverable hang into a hard lock.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers', value: 'TdrDelay', type: REG_DWORD, data: '10', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers', value: 'TdrLevel', type: REG_DWORD, data: '3', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers', value: 'HwSchMode', type: REG_DWORD, data: '2', errorAction: Ignore}
+
+  # ===============================================================
+  # 6. PROCESS PRIORITY - narrow and reversible
+  # High priority for the compositor and input stack only. v0.0.8 put
+  # lsass at realtime and sppsvc at high priority; both are stability
+  # hazards and neither affects frame latency.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\fontdrvhost.exe\PerfOptions', value: 'CpuPriorityClass', type: REG_DWORD, data: '3', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\ctfmon.exe\PerfOptions', value: 'CpuPriorityClass', type: REG_DWORD, data: '3', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sihost.exe\PerfOptions', value: 'CpuPriorityClass', type: REG_DWORD, data: '3', errorAction: Ignore}
+
+  # ===============================================================
+  # 7. INTERRUPTS AND NETWORK LATENCY
+  # Interrupt moderation batches interrupts to save CPU; on a gaming NIC
+  # that batching is visible as DPC latency and jitter.
+  # ===============================================================
+  - !powerShell:
+    command: 'Get-NetAdapterAdvancedProperty -DisplayName "Interrupt Moderation" -ErrorAction SilentlyContinue | Set-NetAdapterAdvancedProperty -DisplayValue "Disabled" -ErrorAction SilentlyContinue'
+    errorAction: Ignore
+
+  # ===============================================================
+  # 8. VIRTUALISATION-BASED SECURITY
+  # VBS/HVCI add a hypervisor layer to every kernel transition. Off is a
+  # measurable latency and RAM win. Hypervisor launch itself is left
+  # alone on Lite so WSL2, Docker and Hyper-V keep working.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard', value: 'EnableVirtualizationBasedSecurity', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard', value: 'HyperVVirtualizationBasedSecurityOptout', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard', value: 'RequirePlatformSecurityFeatures', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\CredentialGuard', value: 'Enabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\SystemGuard', value: 'Enabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\KernelShadowStacks', value: 'Enabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\Lsa', value: 'LsaCfgFlags', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard', value: 'EnableVirtualizationBasedSecurity', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity', value: 'Enabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\Scenarios\CredentialGuard', value: 'Enabled', type: REG_DWORD, data: '0', errorAction: Ignore}
