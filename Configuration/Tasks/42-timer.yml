@@ -1,0 +1,83 @@
+---
+title: 0.5 ms Timer
+description: Enforce a 5000-unit (0.5 ms) system timer at logon for AtomOS Tiny and Lite
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'Installing the 0.5 ms timer daemon...'}
+
+  # ===============================================================
+  # 1. STAGE THE TOOL
+  # SetTimerResolution calls NtSetTimerResolution and holds the request
+  # for as long as the process lives. It is copied out of the payload so
+  # a logon task can start it from a stable path.
+  # ===============================================================
+  - !run:
+    exe: 'cmd.exe'
+    args: '/c if not exist "%SystemRoot%\Atom" mkdir "%SystemRoot%\Atom"'
+    baseDir: true
+    wait: true
+    errorAction: Ignore
+
+  - !run:
+    exe: 'cmd.exe'
+    args: '/c copy /y "PostInstall\Advanced\TimerResolution\2\SetTimerResolution.exe" "%SystemRoot%\Atom\SetTimerResolution.exe"'
+    baseDir: true
+    wait: true
+    errorAction: Ignore
+
+  # ===============================================================
+  # 2. REGISTER THE LOGON TASK
+  # The tool's own syntax is "--resolution <100ns units> --no-console".
+  # SYSTEM + highest + unlimited runtime. If Task Scheduler is blocked
+  # (policy, stripped service) the fallback Run entry starts the same
+  # binary at logon; the tool refuses a second instance, so both paths
+  # are safe together.
+  # ===============================================================
+  - !powerShell:
+    command: |
+      $exe = "$env:SystemRoot\Atom\SetTimerResolution.exe"
+      if (-not (Test-Path $exe)) { return }
+      $ok = $false
+      try {
+          $action = New-ScheduledTaskAction -Execute $exe -Argument '--resolution 5000 --no-console'
+          $trigger = New-ScheduledTaskTrigger -AtLogOn
+          $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+          $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+          Register-ScheduledTask -TaskName 'Atom-TimerResolution' -TaskPath '\Atom\' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+          Start-ScheduledTask -TaskPath '\Atom\' -TaskName 'Atom-TimerResolution' -ErrorAction SilentlyContinue
+          $ok = $true
+      } catch { $ok = $false }
+      if (-not $ok) {
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'AtomTimerResolution' -Value ('"' + $exe + '" --resolution 5000 --no-console') -Type String -Force -ErrorAction SilentlyContinue
+          Start-Process -FilePath $exe -ArgumentList '--resolution','5000','--no-console' -WindowStyle Hidden -ErrorAction SilentlyContinue
+      }
+
+      # CPU guard: holding the timer must not cost a core. If the daemon
+      # uses more than 5% of one core, stop it and record why.
+      Start-Sleep -Seconds 3
+      $proc = Get-Process -Name 'SetTimerResolution' -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($proc) {
+          $t1 = $proc.TotalProcessorTime.TotalMilliseconds
+          Start-Sleep -Seconds 3
+          $proc.Refresh()
+          $t2 = $proc.TotalProcessorTime.TotalMilliseconds
+          $pct = (($t2 - $t1) / 3000) * 100 / [Environment]::ProcessorCount
+          if ($pct -gt 5) {
+              $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+              Unregister-ScheduledTask -TaskName 'Atom-TimerResolution' -TaskPath '\Atom\' -Confirm:$false -ErrorAction SilentlyContinue
+              Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'AtomTimerResolution' -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path 'HKLM:\SOFTWARE\Project Atom\TimerResolution' -Name 'Enabled' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path 'HKLM:\SOFTWARE\Project Atom\TimerResolution' -Name 'AbortedForCpu' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          }
+      }
+    errorAction: Ignore
+
+  # ===============================================================
+  # 3. RECORD THE INTENT
+  # Readable by AtomToolBox and by the PostInstall revert script.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SOFTWARE\Project Atom\TimerResolution', value: 'Enabled', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Project Atom\TimerResolution', value: 'RequestedUnits', type: REG_DWORD, data: '5000', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Project Atom\TimerResolution', value: 'RequestedMilliseconds', type: REG_SZ, data: '0.5', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Project Atom\TimerResolution', value: 'Mechanism', type: REG_SZ, data: 'SetTimerResolution.exe --resolution 5000 --no-console (SYSTEM logon task)', errorAction: Ignore}

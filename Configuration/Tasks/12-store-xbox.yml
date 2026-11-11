@@ -1,0 +1,90 @@
+---
+title: Store and Xbox
+description: Remove the Microsoft Store, Xbox platform and Game DVR surface (keeps winget)
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'Removing Store and Xbox stack...'}
+
+  # KILL STORE AND XBOX HOSTS
+  - !taskKill: {name: 'WinStore.App', errorAction: Ignore}
+  - !taskKill: {name: 'WinStore.App.Host', errorAction: Ignore}
+  - !taskKill: {name: 'WSService', errorAction: Ignore}
+  - !taskKill: {name: 'InstallAgent', errorAction: Ignore}
+  - !taskKill: {name: 'InstallAgentUserSvc', errorAction: Ignore}
+  - !taskKill: {name: 'GameBar', errorAction: Ignore}
+  - !taskKill: {name: 'GameBarFTServer', errorAction: Ignore}
+  - !taskKill: {name: 'XboxGameBarWidgets', errorAction: Ignore}
+
+  # STORE SERVICES (AppXSvc and ClipSVC stay Manual so winget keeps working)
+  - !service: {name: 'AppXSvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'ClipSVC', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'InstallService', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'WSService', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'WalletService', operation: change, startup: 4, errorAction: Ignore}
+
+  # XBOX SERVICES
+  - !service: {name: 'XblAuthManager', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'XblGameSave', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'XboxGipSvc', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'XboxNetApiSvc', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'BcastDVRUserService', operation: change, startup: 4, errorAction: Ignore}
+  - !service: {name: 'TokenBroker', operation: change, startup: 4, errorAction: Ignore}
+
+  # STORE PACKAGES (DesktopAppInstaller deliberately preserved for winget)
+  - !appx: {name: 'Microsoft.WindowsStore*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.StorePurchaseApp*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.StoreExtensions*', type: family, errorAction: Ignore}
+
+  # XBOX PACKAGES AND OVERLAYS
+  - !appx: {name: 'Microsoft.XboxIdentityProvider*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.Xbox.TCUI*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.XboxGameOverlay*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.XboxGamingOverlay*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.XboxSpeechToTextOverlay*', type: family, errorAction: Ignore}
+  - !appx: {name: 'Microsoft.Xbox*', type: family, errorAction: Ignore}
+  - !appx: {name: '*Microsoft.GamingApp*', type: family, errorAction: Ignore}
+  - !appx: {name: '*Microsoft.XboxApp*', type: family, errorAction: Ignore}
+
+  # GAME BAR / GAME DVR - remove the capture hooks from the present path
+  - !registryValue: {path: 'HKCU\SOFTWARE\Microsoft\GameBar', value: 'UseNexusForGameBarEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\SOFTWARE\Microsoft\GameBar', value: 'AutoGameModeEnabled', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\SOFTWARE\Microsoft\GameBar', value: 'AutoGameModeDeclaredAllowed', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\SOFTWARE\Microsoft\GameBar', value: 'ShowStartupPanel', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR', value: 'EnableGameDVR', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKCU\System\GameConfigStore', value: 'GameDVR_AllowGameDVR', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassIdWindows.GamingGameBarInputService', value: 'TrustLevel', type: REG_DWORD, data: '0', errorAction: Ignore}
+
+  # STORE POLICY
+  - !registryKey: {path: 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsStore\WindowsUpdate', operation: delete, errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore', value: 'RemoveWindowsStore', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore', value: 'DisableStoreApps', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore', value: 'AutoDownload', type: REG_DWORD, data: '2', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore', value: 'DisableOSUpgrade', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore', value: 'DisableStoreContextSearch', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore', value: 'AllowStoreToRunInBackground', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\WindowsStore', value: 'EnableAutoStoreUpdates', type: REG_DWORD, data: '0', errorAction: Ignore}
+
+  # STORE AND XBOX SCHEDULED TASKS
+  - !scheduledTask: {path: '\Microsoft\Windows\InstallService\SmartRetry', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\WS\WSRefreshBannedAppsListTask', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\WS\WSTask', operation: delete, errorAction: Ignore}
+  - !scheduledTask: {path: '\Microsoft\Windows\WCM\WiFiTask', operation: delete, errorAction: Ignore}
+  - !powerShell:
+    command: 'Get-ScheduledTask | Where-Object { $_.TaskPath -match ''\\Microsoft\\XblGameSave\\'' } | Disable-ScheduledTask -ErrorAction SilentlyContinue'
+    runas: currentUserElevated
+    errorAction: Ignore
+
+  # STORE AND XBOX FILES
+  - !powerShell:
+    command: >-
+      $paths = @(
+        "$env:ProgramFiles\WindowsApps\Microsoft.WindowsStore*",
+        "$env:ProgramFiles\WindowsApps\Microsoft.StorePurchaseApp*",
+        "$env:ProgramFiles\WindowsApps\Microsoft.Xbox*",
+        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsStore*",
+        "$env:LOCALAPPDATA\Packages\Microsoft.StorePurchaseApp*",
+        "$env:LOCALAPPDATA\Packages\Microsoft.Xbox*"
+      );
+      foreach ($p in $paths) { Get-Item $p -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
+    errorAction: Ignore

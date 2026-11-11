@@ -1,0 +1,24 @@
+---
+title: CompactOS and LZX
+description: CompactOS on Lite and Tiny, forced LZX pass on Tiny
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'AtomOS: enabling CompactOS...'}
+
+  - !cmd: {command: 'compact.exe /CompactOS:always', errorAction: Ignore, weight: 40}
+
+  - !status: {status: 'AtomOS: CompactOS enabled.'}
+
+  # ===============================================================
+  # TINY ONLY - forced LZX pass over the system volume.
+  # Honest note: modern Windows ships most system files already
+  # compressed, so this is slow and reclaims less than the cleanup
+  # pass. It runs anyway because Tiny is the "everything on" tier.
+  # ===============================================================
+  - !status: {status: 'AtomOS Tiny: LZX pass over Windows, Program Files and ProgramData (30-60 min)...', option: profile-tiny}
+  - !cmd: {command: 'compact.exe /C /S:"%SystemRoot%" /A /I /Q /EXE:LZX', errorAction: Ignore, weight: 150, option: profile-tiny}
+  - !cmd: {command: 'compact.exe /C /S:"%ProgramFiles%" /A /I /Q /EXE:LZX', errorAction: Ignore, weight: 80, option: profile-tiny}
+  - !cmd: {command: 'compact.exe /C /S:"%ProgramFiles(x86)%" /A /I /Q /EXE:LZX', errorAction: Ignore, weight: 80, option: profile-tiny}
+  - !cmd: {command: 'compact.exe /C /S:"%ProgramData%" /A /I /Q /EXE:LZX', errorAction: Ignore, weight: 40, option: profile-tiny}
+  - !status: {status: 'AtomOS Tiny: LZX compression complete.', option: profile-tiny}

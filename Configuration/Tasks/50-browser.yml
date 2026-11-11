@@ -1,0 +1,48 @@
+﻿---
+title: Browser
+description: Install the browser chosen in the wizard (winget, silent, idempotent)
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'Installing the selected browser...'}
+
+  # winget ships as Desktop App Installer and is preserved by every profile.
+  # If it is missing (stripped image), the step logs and continues - the
+  # browser can be installed later from the PostInstall toolkit.
+  - !powerShell:
+    command: |
+      if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+          Write-Output 'AtomOS: winget is not available; browser install skipped.'
+          return
+      }
+      winget install --id Brave.Brave -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+    runas: currentUserElevated
+    errorAction: Ignore
+    option: browser-brave
+
+  - !powerShell:
+    command: |
+      if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+          Write-Output 'AtomOS: winget is not available; browser install skipped.'
+          return
+      }
+      winget install --id Mozilla.Firefox -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+    runas: currentUserElevated
+    errorAction: Ignore
+    option: browser-firefox
+
+  - !powerShell:
+    command: |
+      if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+          Write-Output 'AtomOS: winget is not available; browser install skipped.'
+          return
+      }
+      winget install --id Google.Chrome -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+    runas: currentUserElevated
+    errorAction: Ignore
+    option: browser-chrome
+
+  # Record the choice for AtomToolBox and for support triage.
+  - !registryValue: {path: 'HKLM\SOFTWARE\Project Atom', value: 'Browser', type: REG_SZ, data: 'brave', errorAction: Ignore, option: browser-brave}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Project Atom', value: 'Browser', type: REG_SZ, data: 'firefox', errorAction: Ignore, option: browser-firefox}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Project Atom', value: 'Browser', type: REG_SZ, data: 'chrome', errorAction: Ignore, option: browser-chrome}

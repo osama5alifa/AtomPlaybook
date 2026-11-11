@@ -1,0 +1,73 @@
+---
+title: Shrink component store
+description: Tiny - delete the staged payload of every app that was removed
+privilege: TrustedInstaller
+actions:
+
+  - !status: {status: 'AtomOS Tiny: trimming the component store...'}
+
+  # Removing an AppX package deletes the app but leaves its staged payload in
+  # WinSxS, WindowsApps and AppRepository. Those leftovers are multiple GB on
+  # Windows 11 and are what keeps a stripped image at ~17 GB.
+  # Tiny freezes Windows Update in stage 18, so losing the servicing copy here
+  # is an accepted trade. Restoring it needs a repair install.
+  - !powerShell:
+    command: |
+      $snap = "$env:SystemRoot\Temp\atom-appx-before.txt"
+      $before = @()
+      if (Test-Path $snap) { $before = @(Get-Content $snap -ErrorAction SilentlyContinue | Where-Object { $_ }) }
+      $after = @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | ForEach-Object { $_.PackageFamilyName })
+      $removed = @($before | Where-Object { $after -notcontains $_ } | Select-Object -Unique)
+
+      $winApps = Join-Path $env:ProgramFiles 'WindowsApps'
+      $appRepo = Join-Path $env:ProgramData 'Microsoft\Windows\AppRepository\Packages'
+      $winsxs  = Join-Path $env:SystemRoot 'WinSxS'
+      [int64]$freed = 0
+
+      function Remove-Owned([string]$path) {
+          if (-not (Test-Path -LiteralPath $path)) { return [int64]0 }
+          $size = (Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+          if (-not $size) { $size = 0 }
+          try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+          catch {
+              & takeown.exe /F $path /R /A /D Y 2>$null | Out-Null
+              & icacls.exe $path /grant "*S-1-5-32-544:F" /T /C 2>$null | Out-Null
+              Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if (-not (Test-Path -LiteralPath $path)) { return [int64]$size }
+          return [int64]0
+      }
+
+      foreach ($family in $removed) {
+          $short = ($family -split '_')[0]
+          if ([string]::IsNullOrWhiteSpace($short)) { continue }
+
+          if (Test-Path $winApps) {
+              Get-ChildItem $winApps -Directory -Force -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -like ($short + '_*') } |
+                  ForEach-Object { $freed += (Remove-Owned $_.FullName) }
+          }
+          if (Test-Path $appRepo) {
+              Get-ChildItem $appRepo -Directory -Force -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -like ($short + '_*') } |
+                  ForEach-Object { $freed += (Remove-Owned $_.FullName) }
+          }
+          $pattern = '*' + ($short -replace '\.', '*').ToLower() + '*'
+          if (Test-Path $winsxs) {
+              Get-ChildItem $winsxs -Directory -Force -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name.ToLower() -like $pattern } |
+                  ForEach-Object { $freed += (Remove-Owned $_.FullName) }
+          }
+      }
+
+      # Update rollback copies. Tiny cannot uninstall updates anyway.
+      foreach ($extra in @("$env:SystemRoot\WinSxS\Backup", "$env:SystemRoot\WinSxS\Temp")) {
+          $freed += (Remove-Owned $extra)
+      }
+
+      New-Item -Path 'HKLM:\SOFTWARE\Project Atom' -Force -ErrorAction SilentlyContinue | Out-Null
+      Set-ItemProperty -Path 'HKLM:\SOFTWARE\Project Atom' -Name 'ShrinkGB' -Value ([string]([math]::Round($freed / 1GB, 2))) -Type String -Force -ErrorAction SilentlyContinue
+      Set-ItemProperty -Path 'HKLM:\SOFTWARE\Project Atom' -Name 'ShrinkFamilies' -Value ($removed.Count) -Type DWord -Force -ErrorAction SilentlyContinue
+    errorAction: Ignore
+
+  - !status: {status: 'AtomOS Tiny: component store trimmed.'}

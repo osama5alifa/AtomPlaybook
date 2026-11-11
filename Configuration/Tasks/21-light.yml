@@ -1,0 +1,59 @@
+---
+title: AtomOS Lite
+description: Flagship tier - stability guardrails kept, updates paused but servicing intact
+privilege: TrustedInstaller
+actions:
+
+  # Kill the legacy Help pane (requested)
+  - !cmd: {command: 'taskkill /f /im HelpPane.exe 2>nul & takeown /f "%WinDir%\HelpPane.exe" 2>nul & icacls "%WinDir%\HelpPane.exe" /deny Everyone:(X) 2>nul', errorAction: Ignore}
+
+  - !status: {status: 'AtomOS Lite: restoring the stability guardrails...'}
+
+  # ===============================================================
+  # 1. GUARDRAIL SERVICES
+  # The shared spine disables everything that is not needed to run a
+  # game. Lite puts back the four services that keep a daily driver
+  # recoverable: restore points, time sync, drive optimisation and
+  # Windows Hello.
+  # ===============================================================
+  - !service: {name: 'VSS', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'W32Time', operation: change, startup: 2, errorAction: Ignore}
+  - !service: {name: 'defragsvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'WbioSrvc', operation: change, startup: 3, errorAction: Ignore}
+  - !service: {name: 'WaaSMedicSvc', operation: change, startup: 3, errorAction: Ignore}
+  # Brightness slider needs this service
+  - !service: {name: 'DisplayEnhancementService', operation: change, startup: 3, errorAction: Ignore}
+
+  - !registryValue: {path: 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore', value: 'DisableSR', type: REG_DWORD, data: '0', errorAction: Ignore}
+
+  # ===============================================================
+  # 2. WINDOWS UPDATE - paused, not broken
+  # Security servicing stays possible. Automatic download and reboot
+  # are pushed out of the way so nothing lands mid-match.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', value: 'NoAutoUpdate', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', value: 'AUOptions', type: REG_DWORD, data: '2', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', value: 'NoAutoRebootWithLoggedOnUsers', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', value: 'AUPowerManagement', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', value: 'DeferFeatureUpdates', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', value: 'DeferFeatureUpdatesPeriodInDays', type: REG_DWORD, data: '365', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', value: 'DeferQualityUpdates', type: REG_DWORD, data: '1', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', value: 'DeferQualityUpdatesPeriodInDays', type: REG_DWORD, data: '7', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', value: 'BranchReadinessLevel', type: REG_DWORD, data: '20', errorAction: Ignore}
+
+  # A gaming box does not want OEM drivers pushed mid-season. Still honoured on 26H2.
+  - !registryValue: {path: 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', value: 'ExcludeWUDriversInQualityUpdate', type: REG_DWORD, data: '1', errorAction: Ignore}
+
+  # ===============================================================
+  # 3. RECOVERY AND DIAGNOSTICS THAT LITE KEEPS
+  # Crash dumps stay enabled so a bug can be diagnosed instead of
+  # guessed at.
+  # ===============================================================
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\CrashControl', value: 'CrashDumpEnabled', type: REG_DWORD, data: '7', errorAction: Ignore}
+  - !registryValue: {path: 'HKLM\SYSTEM\CurrentControlSet\Control\CrashControl', value: 'AutoReboot', type: REG_DWORD, data: '0', errorAction: Ignore}
+  - !run: {exe: 'bcdedit', args: '/set {current} bootstatuspolicy displayallfailures', errorAction: Ignore}
+
+  # ===============================================================
+  # 4. EDGE is handled by main.yml now: any profile that picked a
+  # replacement browser removes it, and Tiny always does.
+  # ===============================================================

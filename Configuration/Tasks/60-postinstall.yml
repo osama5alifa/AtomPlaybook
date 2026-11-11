@@ -1,0 +1,18 @@
+﻿title: PostInstall Toolkit
+description: Copy the PostInstall toolkit to the desktop. AtomToolBox is installed manually from it.
+privilege: Admin
+actions:
+  - !status: {status: 'Copying PostInstall folder to Desktop...'}
+  
+  # Copy PostInstall folder to Desktop (uses !run + PowerShell for reliability)
+  - !run:
+    exeDir: true
+    exe: 'PowerShell.exe'
+    args: '-NoProfile -ExecutionPolicy Bypass -File Copy-PostInstall.ps1'
+    wait: true
+    runas: currentUserElevated
+    errorAction: Ignore
+
+  # AtomToolBox is deliberately NOT installed by the playbook.
+  # The installer is inside the PostInstall folder on the Desktop; run it manually.
+  - !status: {status: 'AtomToolBox is in the PostInstall folder - install it manually when you want it.'}
